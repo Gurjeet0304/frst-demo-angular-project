@@ -1,0 +1,67 @@
+trigger:
+- main
+
+pool:
+  vmImage: ubuntu-latest
+stages:
+  - stage: Build  
+    jobs:
+      - job: BuildApp
+        steps:
+        - task: NodeTool@0
+          inputs:
+            versionSpec: '16.x'
+        - script: npm install
+          displayName: 'Install dependencies'
+
+        - script: npm run test -- --watch=false --browsers=ChromeHeadless
+          displayName: 'Run unit tests'
+
+        - task: PublishTestResults@2
+          inputs:
+            testResultsFormat: 'JUnit'
+            testResultsFiles: 'junit.xml'  
+        - script: npm run build -- --configuration=production
+          displayName: 'Build Angular Project for Production'
+        - bash: ls -lrt $(Build.SourcesDirectory)/dist ; pwd
+        - task: ArchiveFiles@2
+          inputs:
+            rootFolderOrFile: 'dist/angular11-testing-examples'
+            includeRootFolder: false
+            archiveType: 'zip'
+            archiveFile: '$(Build.ArtifactStagingDirectory)/frst-project.zip'
+            replaceExistingArchive: true
+          displayName: 'Archive Angular Build Output'
+        - task: PublishBuildArtifacts@1
+          inputs:
+            pathToPublish: '$(Build.ArtifactStagingDirectory)/frst-project.zip'
+            artifactName: 'frst-app'
+            publishLocation: 'Container'
+          displayName: 'Publish Angular App Artifact'
+  - stage: DockerContainer
+    jobs:
+      - job: DownloadArtifactandBuildContainer
+        steps:
+        - task: DownloadBuildArtifacts@1
+          inputs:
+            buildType: 'current'
+            downloadType: 'single'
+            artifactName: 'frst-app'
+            downloadPath: '$(Build.SourcesDirectory)'
+        - bash: unzip $(Build.SourcesDirectory)/frst-app/frst-project.zip -d $(Build.SourcesDirectory)/frst-project
+          displayName: ExtractArtifact
+
+        - task: Bash@3
+          inputs:
+            targetType: 'inline'
+            script: |             
+              docker build -t frstdemoacr.azurecr.io/frst-demo:latest .
+              az login --service-principal --username $client_id --password $client_secret --tenant $tenant_id
+              az acr login -n "frstdemoacr"
+              docker push frstdemoacr.azurecr.io/frst-demo:latest
+            workingDirectory: '$(Build.SourcesDirectory)'
+          env:
+            client_id: $(client_id)
+            client_secret: $(client_secret)
+            tenant_id: $(tenant_id)
+          displayName: Build and Push container Image
